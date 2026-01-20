@@ -1,14 +1,13 @@
 import streamlit as st
-import requests
 import httpx
 import google.generativeai as genai
 from bs4 import BeautifulSoup
-from datetime import datetime, time as dtime
+from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 import re
 
 # =====================================================
-# Gemini API (요청대로 코드에 직접 유지)
+# Gemini API (요청대로 코드 내 유지)
 # =====================================================
 GEMINI_API_KEY = "AIzaSyAuFdphgr2zwl_6ddzjdqjFjvFdkcA5Yf4"
 
@@ -16,7 +15,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # =====================================================
-# 요약 규칙 프롬프트
+# 요약 프롬프트
 # =====================================================
 SUMMARY_SYSTEM_PROMPT = """
 📘 기사 요약 방식 설명
@@ -64,7 +63,6 @@ def summarize_with_gemini(title, body, source=None, cache_key=None):
         return st.session_state.summary_cache[cache_key]
 
     full_title = f"△{source}/{title}" if source else f"△{title}"
-
     prompt = f"""{SUMMARY_SYSTEM_PROMPT}
 
 {full_title}
@@ -91,7 +89,7 @@ st.set_page_config(page_title="단독·통신기사 수집기", layout="wide")
 st.title("📰 단독·통신기사 수집기")
 
 # =====================================================
-# 🔑 키워드 그룹 (FULL SET – 누락 없음)
+# 키워드 그룹 (FULL)
 # =====================================================
 keyword_groups = {
     '시경': ['서울경찰청'],
@@ -99,18 +97,17 @@ keyword_groups = {
     '종혜북': [
         '종로', '종암', '성북', '고려대', '참여연대', '혜화', '동대문', '중랑',
         '성균관대', '한국외대', '서울시립대', '경희대', '경실련', '서울대병원',
-        '노원', '강북', '도봉', '북부지법', '북부지검',
-        '상계백병원', '국가인권위원회'
+        '노원', '강북', '도봉', '북부지법', '북부지검', '상계백병원', '국가인권위원회'
     ],
     '마포중부': [
         '마포', '서대문', '서부', '은평', '서부지검', '서부지법', '연세대',
-        '신촌세브란스병원', '군인권센터', '중부', '남대문', '용산', '동국대',
-        '숙명여대', '순천향대병원'
+        '신촌세브란스병원', '군인권센터', '중부', '남대문', '용산',
+        '동국대', '숙명여대', '순천향대병원'
     ],
     '영등포관악': [
         '영등포', '양천', '구로', '강서', '남부지검', '남부지법',
-        '여의도성모병원', '고대구로병원', '관악', '금천', '동작', '방배',
-        '서울대', '중앙대', '숭실대', '보라매병원'
+        '여의도성모병원', '고대구로병원', '관악', '금천', '동작',
+        '방배', '서울대', '중앙대', '숭실대', '보라매병원'
     ],
     '강남광진': [
         '강남', '서초', '수서', '송파', '강동',
@@ -121,8 +118,16 @@ keyword_groups = {
 }
 
 # =====================================================
-# 키워드 선택
+# 옵션 UI
 # =====================================================
+now = datetime.now(ZoneInfo("Asia/Seoul"))
+
+col1, col2 = st.columns(2)
+with col1:
+    start_time = st.time_input("시작 시각", value=dtime(0, 0))
+with col2:
+    end_time = st.time_input("종료 시각", value=dtime(now.hour, now.minute))
+
 selected_groups = st.multiselect(
     "키워드 그룹 선택",
     options=list(keyword_groups.keys()),
@@ -130,18 +135,11 @@ selected_groups = st.multiselect(
 )
 selected_keywords = [kw for g in selected_groups for kw in keyword_groups[g]]
 
-# =====================================================
-# 시간 설정
-# =====================================================
-now = datetime.now(ZoneInfo("Asia/Seoul"))
-col1, col2 = st.columns(2)
-with col1:
-    start_time = st.time_input("시작 시각", value=dtime(0, 0))
-with col2:
-    end_time = st.time_input("종료 시각", value=dtime(now.hour, now.minute))
+collect_wire = st.checkbox("통신기사", value=True)
+collect_naver = st.checkbox("단독기사", value=True)
 
 # =====================================================
-# 세션 상태 (기사 목록은 이미 채워진다는 전제)
+# 세션 상태
 # =====================================================
 if "wire_articles" not in st.session_state:
     st.session_state.wire_articles = []
@@ -149,62 +147,121 @@ if "naver_articles" not in st.session_state:
     st.session_state.naver_articles = []
 
 # =====================================================
-# 통신기사 결과 출력
+# 수집 함수들
 # =====================================================
-st.header("◆통신기사")
-selected_articles = []
+def collect_wire_articles():
+    results = []
+    urls = [
+        ("연합뉴스", "https://www.yna.co.kr/news/1?site=navi_latest_depth01"),
+        ("뉴시스", "https://www.newsis.com/section/list/?sec=society")
+    ]
 
-for i, art in enumerate(st.session_state.wire_articles):
-    with st.expander(art["title"]):
-        is_selected = st.checkbox("이 기사 선택", key=f"wire_{i}")
-        st.markdown(f"[원문 보기]({art['url']})")
-        if is_selected:
-            selected_articles.append(art)
+    for source, url in urls:
+        r = httpx.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        links = soup.select("a")
 
-if selected_articles:
-    st.subheader("📋 복사용 텍스트")
-    text_block = "【사회면】\n"
-    for row in selected_articles:
-        cache_key = f"wire::{row['url']}"
-        summary = summarize_with_gemini(
-            title=row["title"],
-            body=row["content"],
-            source=row.get("source"),
-            cache_key=cache_key
-        )
-        text_block += summary + "\n\n"
-    st.code(text_block.strip(), language="markdown")
+        for a in links[:10]:
+            title = a.get_text(strip=True)
+            href = a.get("href")
+            if not title or not href:
+                continue
+            if any(k in title for k in selected_keywords):
+                results.append({
+                    "title": title,
+                    "content": title,  # 단순화 (본문 필요 시 확장)
+                    "url": href if href.startswith("http") else url,
+                    "source": source
+                })
+    return results
+
+def collect_naver_articles():
+    results = []
+    url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec&sid1=102"
+    r = httpx.get(url, timeout=10)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    for li in soup.select("li")[:10]:
+        a = li.select_one("a")
+        if not a:
+            continue
+        title = a.get_text(strip=True)
+        link = a.get("href")
+        if "[단독]" in title:
+            results.append({
+                "제목": title,
+                "본문": title,
+                "링크": link,
+                "매체": "네이버"
+            })
+    return results
 
 # =====================================================
-# 네이버 단독 결과 출력
+# 수집 시작 버튼 (🔥 핵심 복구)
 # =====================================================
-st.header("◆단독기사")
-selected_naver_articles = []
+if st.button("수집 시작"):
+    if collect_wire:
+        st.session_state.wire_articles = collect_wire_articles()
+    if collect_naver:
+        st.session_state.naver_articles = collect_naver_articles()
 
-for i, art in enumerate(st.session_state.naver_articles):
-    with st.expander(f"{art['매체']}/{art['제목']}"):
-        is_selected = st.checkbox("이 기사 선택", key=f"naver_{i}")
-        st.markdown(f"[원문 보기]({art['링크']})")
-        if is_selected:
-            selected_naver_articles.append(art)
+# =====================================================
+# 결과 출력: 통신기사
+# =====================================================
+if collect_wire:
+    st.header("◆통신기사")
+    selected_articles = []
 
-if selected_naver_articles:
-    st.subheader("📋 복사용 텍스트")
-    text_block = "【타지】\n"
-    for row in selected_naver_articles:
-        clean_title = re.sub(
-            r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?",
-            "",
-            row["제목"]
-        ).strip()
+    for i, art in enumerate(st.session_state.wire_articles):
+        with st.expander(art["title"]):
+            is_selected = st.checkbox("이 기사 선택", key=f"wire_{i}")
+            st.markdown(f"[원문 보기]({art['url']})")
+            if is_selected:
+                selected_articles.append(art)
 
-        cache_key = f"naver::{row['링크']}"
-        summary = summarize_with_gemini(
-            title=clean_title,
-            body=row["본문"],
-            source=row["매체"],
-            cache_key=cache_key
-        )
-        text_block += summary + "\n\n"
+    if selected_articles:
+        st.subheader("📋 복사용 텍스트")
+        text_block = "【사회면】\n"
+        for row in selected_articles:
+            summary = summarize_with_gemini(
+                title=row["title"],
+                body=row["content"],
+                source=row["source"],
+                cache_key=f"wire::{row['url']}"
+            )
+            text_block += summary + "\n\n"
+        st.code(text_block.strip(), language="markdown")
 
-    st.code(text_block.strip(), language="markdown")
+# =====================================================
+# 결과 출력: 단독기사
+# =====================================================
+if collect_naver:
+    st.header("◆단독기사")
+    selected_naver_articles = []
+
+    for i, art in enumerate(st.session_state.naver_articles):
+        with st.expander(f"{art['매체']}/{art['제목']}"):
+            is_selected = st.checkbox("이 기사 선택", key=f"naver_{i}")
+            st.markdown(f"[원문 보기]({art['링크']})")
+            if is_selected:
+                selected_naver_articles.append(art)
+
+    if selected_naver_articles:
+        st.subheader("📋 복사용 텍스트")
+        text_block = "【타지】\n"
+        for row in selected_naver_articles:
+            clean_title = re.sub(
+                r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?",
+                "",
+                row["제목"]
+            ).strip()
+
+            summary = summarize_with_gemini(
+                title=clean_title,
+                body=row["본문"],
+                source=row["매체"],
+                cache_key=f"naver::{row['링크']}"
+            )
+            text_block += summary + "\n\n"
+
+        st.code(text_block.strip(), language="markdown")
