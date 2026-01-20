@@ -12,7 +12,7 @@ import time as t
 GEMINI_API_KEY = "AIzaSyAuFdphgr2zwl_6ddzjdqjFjvFdkcA5Yf4"
 
 GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "https://generativelanguage.googleapis.com/v1/models/"
     "gemini-1.5-flash-latest:generateContent"
 )
 
