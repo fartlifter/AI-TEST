@@ -6,3 +6,4 @@ openpyxl
 beautifulsoup4
 requests
 python-dateutil
+google-generativeai
