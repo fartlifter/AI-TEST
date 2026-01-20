@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import httpx
+import google.generativeai as genai
 from bs4 import BeautifulSoup
 from datetime import datetime, date, time as dtime
 from zoneinfo import ZoneInfo
@@ -11,10 +12,9 @@ import time as t
 # === Gemini API 설정 ===
 GEMINI_API_KEY = "AIzaSyAuFdphgr2zwl_6ddzjdqjFjvFdkcA5Yf4"
 
-GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
-)
+genai.configure(api_key=GEMINI_API_KEY)
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
 
 SUMMARY_SYSTEM_PROMPT = """
 📘 기사 요약 방식 설명
@@ -441,7 +441,13 @@ if collect_wire:
                     body=row["content"],
                     source=row.get("source")
                 )
-                text_block += summary + "\n\n"
+            
+                # ✅ 안전 가드
+                if not summary or not summary.strip().startswith("△"):
+                    summary = f"△{row.get('source','')}/{row['title']}\n-요약 실패 또는 응답 없음."
+            
+                text_block += summary.strip() + "\n\n"
+
             st.code(text_block.strip(), language="markdown")
             st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
         elif articles:
@@ -476,14 +482,17 @@ if collect_naver:
     if selected_naver_articles:
         st.subheader("📋 복사용 텍스트 (선택된 기사만)")
         text_block = "【타지】\n"
-        for row in selected_naver_articles:
-            clean_title = re.sub(r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?", "", row['제목']).strip()
+        for row in selected_articles:
             summary = summarize_with_gemini(
                 title=clean_title,
                 body=row["본문"],
                 source=row["매체"]
             )
-            text_block += summary + "\n\n"
+            
+            if not summary or not summary.strip().startswith("△"):
+                summary = f"△{row['매체']}/{clean_title}\n-요약 실패 또는 응답 없음."
+            
+            text_block += summary.strip() + "\n\n"
         st.code(text_block.strip(), language="markdown")
         st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
     elif naver_articles:
