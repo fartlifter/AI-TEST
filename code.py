@@ -13,7 +13,7 @@ GEMINI_API_KEY = "AIzaSyAuFdphgr2zwl_6ddzjdqjFjvFdkcA5Yf4"
 
 GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash-latest"
+    "gemini-1.5-flash-latest:generateContent"
 )
 
 SUMMARY_SYSTEM_PROMPT = """
