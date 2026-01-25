@@ -8,88 +8,19 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time as t
 
-# ===== 여기부터 추가 =====
-import google.generativeai as genai
-
-GEMINI_API_KEY = "네_API_키"
-
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-
-def summarize_text_with_gemini(text):
-    prompt = f"""
-📘 기사 요약 방식 설명
-<요약 형식>
-입력 기사 내용에 따라 다음 두 가지 형식을 사용:
-
-1.
-△매체/기사제목 기사본문 형식의 경우:
-△매체/기사제목
--개조식 요약 문장. 사실 단위로 구분해 마침표로 연결. 첫머리는 반드시 하이픈(-)으로 시작.
-
-2.
-△기사제목 기사본문 형식의 경우:
-△기사제목
--개조식 요약 문장. 위와 동일하게 처리.
-
-***△ 다음 매체명 없이 바로 제목 나오는 경우엔 매체명 쓰지 않음!
-***매체명이 제목이 아니라, 본문에만 있는 경우는 매체명 쓰지 않음!
-
-<규칙>
--문장 시작은 항상 - 하이픈으로 시작
--제목과 본문 사이에만 줄바꿈
--첫 문장은 주체, 쉼표, 평서형 어미
--'~함' 체 사용 금지
--중복·수사·감성 표현 제거
--핵심 정보(일시·인물·장소·수치) 포함
-
-<예시>
-△인권위, 3년여 우여곡절 끝 ‘수요시위 방해 중단’ 인용 결정
--인권위, 2일 경찰이 수요시위 방해행위 막아야 한다는 취지로 진정 사건 인용 결정. 앞서 인권위는 같은 진정을 법적 근거 없이 기각했으나 3년 만에 입장 바꿔.
-
-[기사 본문]
-{text}
-"""
-    try:
-        res = gemini_model.generate_content(prompt)
-        return res.text.strip()
-    except Exception:
-        return text
-
-# ===== 여기까지 추가 =====
-
 # === 네이버 API 인증 정보 ===
 client_id = "R7Q2OeVNhj8wZtNNFBwL"
 client_secret = "49E810CBKY"
 
 st.set_page_config(page_title="단독·통신기사 수집기", layout="wide")
-st.title("📰 단독·통신기사 수집기")
-st.caption("세계일보 경찰팀 라인별 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 250730)")
+st.title("📰 법조 단독·통신기사 수집기")
+st.caption("세계일보 법조팀 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 260125)")
 
 # === 키워드 그룹 (공통) ===
 keyword_groups = {
-    '시경': ['서울경찰청'],
-    '본청': ['경찰청'],
-    '종혜북': [
-        '종로', '종암', '성북', '고려대', '참여연대', '혜화', '동대문', '중랑',
-        '성균관대', '한국외대', '서울시립대', '경희대', '경실련', '서울대병원', '국민대', 
-        '노원', '강북', '도봉', '북부지법', '북부지검', '상계백병원', '국가인권위원회',
-        '상명대', '배화여대', '한국예술종합학교', '한성대', '덕성여대'
-    ],
-    '마포중부': [
-        '마포', '서대문', '서부', '은평', '서부지검', '서부지법', '연세대', '반부패범죄수사대', '공공범죄수사대',
-        '금융범죄수사대', '마약범죄수사대', '신촌세브란스병원', '군인권센터', '중부', '중구', 
-        '남대문', '용산', '동국대', '숙명여대', '순천향대병원'
-    ],
-    '남부지검법': ['남부지검', '남부지법'],
-    '영등포관악': [
-        '영등포', '양천', '구로', '강서', '여의도성모병원',
-        '고대구로병원', '관악', '금천', '동작', '방배', '서울대', '중앙대', '숭실대', '보라매병원'
-    ],
-    '강남광진': [
-        '강남', '서초', '수서', '송파', '강동', '삼성의료원', '현대아산병원',
-        '강남세브란스병원', '광진', '성동', '동부지검', '동부지법', '한양대', '건국대', '세종대'
-    ]
+    '법원': ['서울중앙지법','서울고법','대법원','헌법재판소','대한변호사협회','서울지방변호사회','한국여성변호사회'
+          '서울행정법원','서울가정법원','서울회생법원'],
+    '검찰': ['서울중앙지검','서울고검','대검찰청','법무부']
 }
 
 now = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -101,7 +32,7 @@ with col2:
     end_date = st.date_input("종료 날짜", value=now.date())
     end_time = st.time_input("종료 시각", value=dtime(now.hour, now.minute))
 
-selected_groups = st.multiselect("키워드 그룹 선택", options=list(keyword_groups.keys()), default=['시경', '종혜북'])
+selected_groups = st.multiselect("키워드 그룹 선택", options=list(keyword_groups.keys()), default=['법원'])
 selected_keywords = [kw for g in selected_groups for kw in keyword_groups[g]]
 
 start_dt = datetime.combine(start_date, start_time).replace(tzinfo=ZoneInfo("Asia/Seoul"))
@@ -407,8 +338,7 @@ if collect_wire:
             st.subheader("📋 복사용 텍스트 (선택된 기사만)")
             text_block = "【사회면】\n"
             for row in selected_articles:
-                summary = summarize_text_with_gemini(row["content"])
-                text_block += f"△{row['title']}\n-{summary}\n\n"
+                text_block += f"△{row['title']}\n-{row['content'].strip()}\n\n"
             st.code(text_block.strip(), language="markdown")
             st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
         elif articles:
@@ -439,14 +369,14 @@ if collect_naver:
             st.markdown(f"- {result['하이라이트']}", unsafe_allow_html=True)
             if is_selected:
                 selected_naver_articles.append(result)
+
     if selected_naver_articles:
         st.subheader("📋 복사용 텍스트 (선택된 기사만)")
         text_block = "【타지】\n"
         for row in selected_naver_articles:
             clean_title = re.sub(r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?", "", row['제목']).strip()
-            summary = summarize_text_with_gemini(row["본문"])
-            text_block += f"△{row['매체']}/{clean_title}\n-{summary}\n\n"
-        st.code(text_block.strip(), language="markdown")        
+            text_block += f"△{row['매체']}/{clean_title}\n-{row['본문']}\n\n"
+        st.code(text_block.strip(), language="markdown")
         st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
     elif naver_articles:
         st.subheader("📋 복사용 텍스트 (선택된 기사 없음)")
