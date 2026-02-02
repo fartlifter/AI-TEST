@@ -153,17 +153,115 @@ def naver_parse_pubdate(pubdate_str):
         return None
 
 def naver_extract_title_and_body(url):
+    """
+    n.news.naver.com 및 lawtimes.co.kr 전용 selector를 우선 시도.
+    lawtimes의 경우 사용자 제공 클래스명을 최우선으로 사용.
+    실패 시 일반적인 og:title/h1/article/p fallback 시도.
+    """
     try:
-        if "n.news.naver.com" not in url:
-            return None, None
         html = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         if html.status_code != 200:
             return None, None
         soup = BeautifulSoup(html.text, "html.parser")
-        title_div = soup.find("div", class_="media_end_head_title")
-        content_div = soup.find("div", id="newsct_article")
-        title = title_div.get_text(strip=True) if title_div else None
-        body = content_div.get_text(separator="\n", strip=True) if content_div else None
+
+        # naver news (기존 처리)
+        if "n.news.naver.com" in url:
+            title_div = soup.find("div", class_="media_end_head_title")
+            content_div = soup.find("div", id="newsct_article")
+            title = title_div.get_text(strip=True) if title_div else None
+            body = content_div.get_text(separator="\n", strip=True) if content_div else None
+            return title, body
+
+        # lawtimes 전용 처리: 사용자 제공 selector 우선
+        if "lawtimes.co.kr" in url:
+            title = None
+            body = None
+            # 1) 우선 사용자 제공 클래스들
+            title_tag = soup.select_one("div.css-uuqcvx.e16ienf60")
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+            body_tag = soup.select_one("div.css-idt6wc.e1ogx6dn0")
+            if body_tag:
+                # 본문은 여러 <p>와 이미지 태그 등이 섞여있으므로 p 태그를 유지하면서 텍스트로 병합
+                paragraphs = []
+                for p in body_tag.find_all("p"):
+                    text = p.get_text(separator="\n", strip=True)
+                    if text:
+                        paragraphs.append(text)
+                combined = "\n\n".join(paragraphs).strip()
+                if len(combined) > 20:
+                    body = combined
+
+            # 2) og:title / h1 fallback
+            if not title:
+                og_title = soup.find("meta", property="og:title")
+                if og_title and og_title.get("content"):
+                    title = og_title.get("content").strip()
+                else:
+                    h1 = soup.find("h1")
+                    if h1:
+                        title = h1.get_text(strip=True)
+
+            # 3) 추가 후보 selector (안정성 확보)
+            if not body:
+                candidate_selectors = [
+                    "div.article-body", "div#article", "div#articleBody", "div#content", "div.view_content",
+                    "div.article_view", "div#article-view", "div#newsView", "div.news_view", "article"
+                ]
+                for sel in candidate_selectors:
+                    node = soup.select_one(sel)
+                    if node:
+                        text = node.get_text(separator="\n", strip=True)
+                        if len(text) > 50:
+                            body = text
+                            break
+
+            # 4) fallback: article 태그 또는 p 합치기
+            if not body:
+                article_nodes = soup.find_all("article")
+                if article_nodes:
+                    combined2 = "\n".join(n.get_text(separator="\n", strip=True) for n in article_nodes)
+                    if len(combined2) > 50:
+                        body = combined2
+                if not body:
+                    ps = soup.find_all("p")
+                    combined3 = "\n".join(p.get_text(strip=True) for p in ps if len(p.get_text(strip=True)) > 20)
+                    if len(combined3) > 50:
+                        body = combined3
+
+            return title, body
+
+        # 일반 도메인 fallback
+        title = None
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            title = og_title.get("content").strip()
+        if not title:
+            h1 = soup.find("h1")
+            if h1:
+                title = h1.get_text(strip=True)
+
+        body = None
+        candidates = ["div#article", "div.article", "article", "div#content", "div#newsBody"]
+        for sel in candidates:
+            node = soup.select_one(sel)
+            if node:
+                text = node.get_text(separator="\n", strip=True)
+                if len(text) > 50:
+                    body = text
+                    break
+        if not body:
+            main = soup.find("main")
+            if main:
+                text = main.get_text(separator="\n", strip=True)
+                if len(text) > 50:
+                    body = text
+        if not body:
+            ps = soup.find_all("p")
+            combined = "\n".join(p.get_text(strip=True) for p in ps if len(p.get_text(strip=True)) > 20)
+            if len(combined) > 50:
+                body = combined
+
         return title, body
     except:
         return None, None
@@ -185,7 +283,8 @@ def naver_extract_media_name(url):
             "newsis": "뉴시스", "yna": "연합", "mt": "머투", "weekly": "주간조선", "www.imaeil": "매일신문",
             "biz.chosun": "조선비즈", "fnnews": "파뉴", "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트", 
             "yonhapnewstv.co": "연뉴TV", "ytn.co": "YTN", "nocutnews.co": "노컷", "asiae.co": "아경", "biz.heraldcorp": "헤경",
-            "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN"
+            "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN",
+            "lawtimes": "법률"
         }
         if composite_key in media_mapping:
             return media_mapping[composite_key]
@@ -208,13 +307,33 @@ def naver_safe_api_request(url, headers, params, max_retries=3):
     return res
 
 def naver_fetch_and_filter(item_data):
+    """
+    변경된 동작:
+    - lawtimes인 경우에만 originallink를 사용하여 원문에서 제목/본문을 가져옴.
+    - 그 외에는 item['link']가 n.news.naver.com 이어야 진행.
+    - 모든 케이스에서 제목에 '[단독]'이 있어야 수집.
+    """
     item, start_dt, end_dt, selected_keywords, use_keyword_filter = item_data
-    link = item.get("link")
-    if not link or "n.news.naver.com" not in link:
-        return None
+
+    origin = item.get("originallink", "") or ""
+    link_field = item.get("link", "") or ""
+
+    # lawtimes이면 originallink를 사용
+    if "lawtimes.co.kr" in origin:
+        link = origin
+    else:
+        # lawtimes가 아니면 네이버 뉴스링크(n.news.naver.com)만 허용
+        if "n.news.naver.com" in link_field:
+            link = link_field
+        else:
+            return None
 
     title, body = naver_extract_title_and_body(link)
-    if not title or "[단독]" not in title or not body:
+    if not title or not body:
+        return None
+
+    # 모든 기사에서 제목에 "[단독]"이 있어야 수집 (법률신문 포함)
+    if "[단독]" not in title:
         return None
 
     pub_dt = naver_parse_pubdate(item.get("pubDate"))
@@ -231,7 +350,8 @@ def naver_fetch_and_filter(item_data):
     for kw in matched_keywords:
         highlighted_body = highlighted_body.replace(kw, f"<mark>{kw}</mark>")
     highlighted_body = highlighted_body.replace("\n", "<br><br>")
-    media = naver_extract_media_name(item.get("originallink", ""))
+
+    media = naver_extract_media_name(origin or link)
 
     return {
         "키워드": "[단독]",
