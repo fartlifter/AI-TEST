@@ -309,77 +309,57 @@ def naver_safe_api_request(url, headers, params, max_retries=3):
 def naver_fetch_and_filter(item_data):
     item, start_dt, end_dt, selected_keywords, use_keyword_filter = item_data
 
-    # 1. 원문 링크(originallink)를 우선 사용하고, 없으면 link 사용
+    # 1. API 기본 정보 추출 (originallink가 법률신문 주소일 확률이 높음)
     link = (item.get("originallink") or item.get("link") or "").strip()
-    if not link:
-        return None
+    api_title = BeautifulSoup(item.get("title", ""), "html.parser").get_text()
+    pub_dt = naver_parse_pubdate(item.get("pubDate"))
 
-    # 2. 제목 정규화 및 [단독] 필터
-    api_title_raw = item.get("title", "") or ""
-    try:
-        api_title = BeautifulSoup(api_title_raw, "html.parser").get_text()
-    except:
-        api_title = api_title_raw
-
+    # 2. 필수 필터 (단독 여부 및 날짜) - 본문 수집 전 수행
     if "[단독]" not in api_title:
         return None
-
-    # 3. 발행일 필터
-    pub_dt = naver_parse_pubdate(item.get("pubDate"))
     if not pub_dt or not (start_dt <= pub_dt <= end_dt):
         return None
 
+    # 3. 본문 수집 시도 (실패해도 죽지 않게 try-except 처리)
+    title, body = None, None
     try:
-        title, body = None, None
-        is_lawtimes = "lawtimes.co.kr" in link
-        is_naver = "n.news.naver.com" in link
+        if "n.news.naver.com" in link or "lawtimes.co.kr" in link:
+            title, body = naver_extract_title_and_body(link)
+    except:
+        pass # 실패하면 title, body는 None 유지
 
-        # 네이버 뉴스 또는 법률신문인 경우에만 본문 수집 시도
-        if is_naver or is_lawtimes:
-            # 수집 시에는 네이버 링크가 존재한다면 네이버 링크를 우선 시도 (본문 추출이 더 안정적임)
-            fetch_url = item.get("link") if is_naver else link
-            title, body = naver_extract_title_and_body(fetch_url)
-        else:
-            # 그 외 매체는 수집 대상 제외
+    # 4. 키워드 필터링
+    matched_keywords = []
+    if use_keyword_filter and selected_keywords:
+        # 본문이 있으면 본문에서, 없으면 제목에서 키워드 검색
+        check_text = body if body else api_title
+        matched_keywords = [kw for kw in selected_keywords if kw in check_text]
+        if not matched_keywords:
             return None
 
-        if not title or not body:
-            return None
+    # 5. 최종 데이터 구성 (본문 수집 실패 시 처리 로직 추가)
+    final_title = title if title else api_title
+    final_body = body if body else "[본문 수집 실패: 원문 링크를 클릭해 확인하세요]"
+    
+    # 하이라이트 처리
+    highlighted = final_body
+    if body:
+        for kw in matched_keywords:
+            highlighted = highlighted.replace(kw, f"<mark>{kw}</mark>")
+    highlighted = highlighted.replace("\n", "<br>")
 
-        # 4. 키워드 필터 적용
-        matched_keywords = []
-        if use_keyword_filter and selected_keywords:
-            matched_keywords = [kw for kw in selected_keywords if kw in body]
-            if not matched_keywords:
-                return None
-
-        # 5. 하이라이트 및 매체명 처리
-        highlighted_body = ""
-        if is_naver:
-            highlighted_body = body
-            for kw in matched_keywords:
-                highlighted_body = highlighted_body.replace(kw, f"<mark>{kw}</mark>")
-            highlighted_body = highlighted_body.replace("\n", "<br><br>")
-        
-        # 법률신문은 요청하신 대로 하이라이트 비워둠 (필요시 위 로직 동일 적용 가능)
-
-        media = naver_extract_media_name(link)
-        out_title = title or api_title
-
-        return {
-            "키워드": "[단독]",
-            "매체": media,
-            "제목": out_title,
-            "날짜": pub_dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "본문": body,
-            "필터일치": ", ".join(matched_keywords),
-            "링크": link,
-            "하이라이트": highlighted_body,
-            "pub_dt": pub_dt
-        }
-    except Exception:
-        return None
-
+    return {
+        "키워드": "[단독]",
+        "매체": naver_extract_media_name(link),
+        "제목": final_title,
+        "날짜": pub_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "본문": final_body,
+        "필터일치": ", ".join(matched_keywords),
+        "링크": link,
+        "하이라이트": highlighted,
+        "pub_dt": pub_dt
+    }
+    
 # === 수집 버튼 ===
 if st.button("✅ 기사 수집 시작"):
     if collect_wire:
