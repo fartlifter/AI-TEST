@@ -1,4 +1,3 @@
-!pip install streamlit
 import streamlit as st
 import requests
 import httpx
@@ -15,12 +14,12 @@ client_secret = "49E810CBKY"
 
 st.set_page_config(page_title="단독·통신기사 수집기", layout="wide")
 st.title("📰 법조 단독·통신기사 수집기")
-st.caption("세계일보 법조팀 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 260216)")
+st.caption("세계일보 법조팀 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 260125)")
 
 # === 키워드 그룹 (공통) ===
 keyword_groups = {
     '법원': ['서울중앙지법','서울고법','대법원','헌법재판소','대한변호사협회','서울지방변호사회','한국여성변호사회',
-          '서울행정법원','서울가정법원','서울회생법원','법원행정처','특허법원'],
+          '서울행정법원','서울가정법원','서울회생법원','법원행정처'],
     '검찰': ['서울중앙지검','서울고검','대검찰청','법무부','특검','고위공직자범죄수사처','합동수사본부','중수청','공소청','검찰']
 }
 
@@ -28,7 +27,7 @@ now = datetime.now(ZoneInfo("Asia/Seoul"))
 col1, col2 = st.columns(2)
 with col1:
     start_date = st.date_input("시작 날짜", value=now.date())
-    start_time = st.time_input("시각", value=dtime(0, 0))
+    start_time = st.time_input("시작 시각", value=dtime(0, 0))
 with col2:
     end_date = st.date_input("종료 날짜", value=now.date())
     end_time = st.time_input("종료 시각", value=dtime(now.hour, now.minute))
@@ -155,22 +154,15 @@ def naver_parse_pubdate(pubdate_str):
 
 def naver_extract_title_and_body(url):
     try:
+        if "n.news.naver.com" not in url:
+            return None, None
         html = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         if html.status_code != 200:
             return None, None
         soup = BeautifulSoup(html.text, "html.parser")
-
-        # LawTimes specific handling
-        if "www.lawtimes.co.kr/news" in url:
-            title_tag = soup.find("h1", class_="heading")
-            content_div = soup.find("article", id="article-view-content-div")
-        elif "n.news.naver.com" in url: # Original Naver News handling
-            title_tag = soup.find("div", class_="media_end_head_title")
-            content_div = soup.find("div", id="newsct_article")
-        else:
-            return None, None
-
-        title = title_tag.get_text(strip=True) if title_tag else None
+        title_div = soup.find("div", class_="media_end_head_title")
+        content_div = soup.find("div", id="newsct_article")
+        title = title_div.get_text(strip=True) if title_div else None
         body = content_div.get_text(separator="\n", strip=True) if content_div else None
         return title, body
     except:
@@ -189,12 +181,11 @@ def naver_extract_media_name(url):
             "khan": "경향", "hankookilbo": "한국", "segye": "세계", "seoul": "서울",
             "kmib": "국민", "munhwa": "문화", "kbs": "KBS", "sbs": "SBS", "mbn.co": "MBN",
             "imnews": "MBC", "jtbc": "JTBC", "ichannela": "채널A", "tvchosun": "TV조선",
-            "mk": "매경", "sedaily": "서경", "hankyung": "한경", "news1": "뉴스1", "www.pressian": "프레시안",
+            "mk": "매경", "sedaily": "서경", "hankyung": "한경", "news1": "뉴스1", "www.pressian": "프레시안", 
             "newsis": "뉴시스", "yna": "연합", "mt": "머투", "weekly": "주간조선", "www.imaeil": "매일신문",
-            "biz.chosun": "조선비즈", "fnnews": "파뉴", "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트",
+            "biz.chosun": "조선비즈", "fnnews": "파뉴", "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트", 
             "yonhapnewstv.co": "연뉴TV", "ytn.co": "YTN", "nocutnews.co": "노컷", "asiae.co": "아경", "biz.heraldcorp": "헤경",
-            "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN",
-            "lawtimes": "법률신문" # Added for LawTimes
+            "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN"
         }
         if composite_key in media_mapping:
             return media_mapping[composite_key]
@@ -219,7 +210,8 @@ def naver_safe_api_request(url, headers, params, max_retries=3):
 def naver_fetch_and_filter(item_data):
     item, start_dt, end_dt, selected_keywords, use_keyword_filter = item_data
     link = item.get("link")
-    # Removed the initial check for "n.news.naver.com" to allow other URLs
+    if not link or "n.news.naver.com" not in link:
+        return None
 
     title, body = naver_extract_title_and_body(link)
     if not title or "[단독]" not in title or not body:
@@ -272,9 +264,9 @@ if st.button("✅ 기사 수집 시작"):
         seen_links = set()
         all_articles = []
         total = 0
-
-        progress_bar = st.empty()
-
+        
+        progress_bar = st.empty() 
+        
         steps = list(range(1, 1001, 100))
         num_steps = len(steps)
         for i, start_index in enumerate(steps, 1):
@@ -317,11 +309,11 @@ if collect_wire:
         for i, art in enumerate(articles):
             expander_key = f"wire_expander_{i}"
             checkbox_key = f"wire_{i}"
-
+        
             # expander 초기값: 체크박스가 선택된 경우 True, 아니면 False
             if expander_key not in st.session_state:
                 st.session_state[expander_key] = False
-
+        
             # 체크박스 상태가 True라면 expander도 True로!
             if st.session_state.get(checkbox_key, False):
                 st.session_state[expander_key] = True
@@ -361,13 +353,13 @@ if collect_naver:
     for idx, result in enumerate(naver_articles):
         expander_key = f"naver_expander_{idx}"
         checkbox_key = f"naver_chk_{idx}"
-
+    
         if expander_key not in st.session_state:
             st.session_state[expander_key] = False
-
+    
         if st.session_state.get(checkbox_key, False):
             st.session_state[expander_key] = True
-
+    
         with st.expander(f"{result['매체']}/{result['제목']}", expanded=st.session_state[expander_key]):
             is_selected = st.checkbox("이 기사 선택", key=checkbox_key)
             st.markdown(f"[🔗 원문 보기]({result['링크']})", unsafe_allow_html=True)
