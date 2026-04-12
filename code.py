@@ -14,7 +14,7 @@ client_secret = "49E810CBKY"
 
 st.set_page_config(page_title="단독·통신기사 수집기", layout="wide")
 st.title("📰 법조 단독·통신기사 수집기")
-st.caption("세계일보 법조팀 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 260220)")
+st.caption("세계일보 법조팀 보고를 도와줍니다. (만든이: 윤준호, 업데이트: 260412)")
 
 # === 키워드 그룹 (공통) ===
 keyword_groups = {
@@ -193,7 +193,7 @@ def naver_extract_media_name(url):
             "biz.chosun": "조선비즈", "fnnews": "파뉴", "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트",
             "yonhapnewstv.co": "연뉴TV", "ytn.co": "YTN", "nocutnews.co": "노컷", "asiae.co": "아경", "biz.heraldcorp": "헤경",
             "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN",
-            "lawtimes": "법률신문" # Added for LawTimes
+            "lawtimes": "법률신문" 
         }
         if composite_key in media_mapping:
             return media_mapping[composite_key]
@@ -218,10 +218,12 @@ def naver_safe_api_request(url, headers, params, max_retries=3):
 def naver_fetch_and_filter(item_data):
     item, start_dt, end_dt, selected_keywords, use_keyword_filter = item_data
     link = item.get("link")
-    # Removed the initial check for "n.news.naver.com" to allow other URLs
 
     title, body = naver_extract_title_and_body(link)
-    if not title or "[단독]" not in title or not body:
+    
+    # [수정됨] 단독, H-EXCLUSIVE, only이데일리 문패 확인 로직 추가
+    exclusive_tags = ["[단독]", "[H-EXCLUSIVE]", "[only이데일리]"]
+    if not title or not any(tag in title for tag in exclusive_tags) or not body:
         return None
 
     pub_dt = naver_parse_pubdate(item.get("pubDate"))
@@ -240,8 +242,11 @@ def naver_fetch_and_filter(item_data):
     highlighted_body = highlighted_body.replace("\n", "<br><br>")
     media = naver_extract_media_name(item.get("originallink", ""))
 
+    # 가장 먼저 매칭된 태그를 키워드 항목에 저장
+    matched_tag = next((tag for tag in exclusive_tags if tag in title), "[단독]")
+
     return {
-        "키워드": "[단독]",
+        "키워드": matched_tag,
         "매체": media,
         "제목": title,
         "날짜": pub_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -273,39 +278,46 @@ if st.button("✅ 기사 수집 시작"):
         total = 0
 
         progress_bar = st.empty()
-
+        
+        # [수정됨] 검색 쿼리를 3가지로 나누어 순회
         steps = list(range(1, 1001, 100))
-        num_steps = len(steps)
-        for i, start_index in enumerate(steps, 1):
-            progress = i / num_steps
-            progress_bar.progress(progress, text=f"단독기사 {total}건 수집 중")
-            params = {
-                "query": "[단독]",
-                "sort": "date",
-                "display": 100,
-                "start": start_index
-            }
-            res = naver_safe_api_request("https://openapi.naver.com/v1/search/news.json", headers, params)
-            if res.status_code != 200:
-                st.warning(f"API 호출 실패: {res.status_code}")
-                break
-            items = res.json().get("items", [])
-            if not items:
-                break
+        search_queries = ["[단독]", "[H-EXCLUSIVE]", "[only이데일리]"]
+        total_steps = len(steps) * len(search_queries)
+        current_step = 0
 
-            with ThreadPoolExecutor(max_workers=25) as executor:
-                futures = [
-                    executor.submit(naver_fetch_and_filter, (item, start_dt, end_dt, selected_keywords, use_keyword_filter))
-                    for item in items
-                ]
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result and result["링크"] not in seen_links:
-                        seen_links.add(result["링크"])
-                        all_articles.append(result)
-                        total += 1
+        for query_kw in search_queries:
+            for start_index in steps:
+                current_step += 1
+                progress = current_step / total_steps
+                progress_bar.progress(progress, text=f"{query_kw} 기사 {total}건 수집 중...")
+                params = {
+                    "query": query_kw,
+                    "sort": "date",
+                    "display": 100,
+                    "start": start_index
+                }
+                res = naver_safe_api_request("https://openapi.naver.com/v1/search/news.json", headers, params)
+                if res.status_code != 200:
+                    st.warning(f"API 호출 실패: {res.status_code}")
+                    break
+                items = res.json().get("items", [])
+                if not items:
+                    break
+
+                with ThreadPoolExecutor(max_workers=25) as executor:
+                    futures = [
+                        executor.submit(naver_fetch_and_filter, (item, start_dt, end_dt, selected_keywords, use_keyword_filter))
+                        for item in items
+                    ]
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result and result["링크"] not in seen_links:
+                            seen_links.add(result["링크"])
+                            all_articles.append(result)
+                            total += 1
+                            
         st.session_state["naver_articles"] = all_articles
-        st.success(f"✅ 단독기사 {len(all_articles)}건 수집 완료")
+        st.success(f"✅ 단독기사 통합 {len(all_articles)}건 수집 완료")
 
 # === 결과 출력 ===
 if collect_wire:
@@ -317,15 +329,12 @@ if collect_wire:
             expander_key = f"wire_expander_{i}"
             checkbox_key = f"wire_{i}"
 
-            # expander 초기값: 체크박스가 선택된 경우 True, 아니면 False
             if expander_key not in st.session_state:
                 st.session_state[expander_key] = False
 
-            # 체크박스 상태가 True라면 expander도 True로!
             if st.session_state.get(checkbox_key, False):
                 st.session_state[expander_key] = True
 
-            # 매 기사별로 일치 키워드 추출
             if "content" in art:
                 matched_kw = [kw for kw in selected_keywords if kw in art["content"]]
             else:
@@ -345,7 +354,7 @@ if collect_wire:
             st.subheader("📋 복사용 텍스트 (선택된 기사만)")
             text_block = "【사회면】\n"
             for row in selected_articles:
-                text_block += f"△{row['title']}\n-{row['content'].strip()}\n\n"
+                text_block += f"▲{row['title']}\n-{row['content'].strip()}\n\n"
             st.code(text_block.strip(), language="markdown")
             st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
         elif articles:
@@ -367,7 +376,10 @@ if collect_naver:
         if st.session_state.get(checkbox_key, False):
             st.session_state[expander_key] = True
 
-        with st.expander(f"{result['매체']}/{result['제목']}", expanded=st.session_state[expander_key]):
+        # H-EXCLUSIVE나 only이데일리가 매칭된 경우 표기를 위해 제목 앞에 달아줌
+        display_title = f"[{result['키워드']}] {result['제목']}" if result['키워드'] != "[단독]" else result['제목']
+
+        with st.expander(f"{result['매체']}/{display_title}", expanded=st.session_state[expander_key]):
             is_selected = st.checkbox("이 기사 선택", key=checkbox_key)
             st.markdown(f"[🔗 원문 보기]({result['링크']})", unsafe_allow_html=True)
             st.caption(result["날짜"])
@@ -381,8 +393,9 @@ if collect_naver:
         st.subheader("📋 복사용 텍스트 (선택된 기사만)")
         text_block = "【타지】\n"
         for row in selected_naver_articles:
-            clean_title = re.sub(r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?", "", row['제목']).strip()
-            text_block += f"△{row['매체']}/{clean_title}\n-{row['본문']}\n\n"
+            # [수정됨] 정규식에 H-EXCLUSIVE와 only이데일리 추가하여 복사할 때 제목에서 깔끔하게 제거
+            clean_title = re.sub(r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?|\[H-EXCLUSIVE\]|\[only이데일리\]", "", row['제목'], flags=re.IGNORECASE).strip()
+            text_block += f"▲{row['매체']}/{clean_title}\n-{row['본문']}\n\n"
         st.code(text_block.strip(), language="markdown")
         st.caption("✅ 복사 버튼을 눌러 선택한 기사 내용을 복사하세요.")
     elif naver_articles:
