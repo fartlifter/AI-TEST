@@ -87,28 +87,23 @@ def fetch_articles_concurrently(article_list, selector):
 def parse_yonhap():
     collected, page = [], 1
     st.info("🔍 [연합뉴스] 기사 목록 수집 중...")
-    
-    # 더 구체적인 User-Agent 및 헤더 설정
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
-    }
-
     while True:
         url = f"https://www.yna.co.kr/society/all/{page}"
+        
+        # 예외 처리 블록 추가 및 타임아웃 약간 증가
         try:
-            # timeout을 충분히 주고, 예외 발생 시 크롤링 안전 종료
-            res = httpx.get(url, headers=headers, timeout=10.0)
-            res.raise_for_status()
-        except (httpx.ConnectTimeout, httpx.ConnectError, httpx.HTTPError) as e:
-            st.warning(f"⚠️ [연합뉴스] 페이지({page}) 수집 중 네트워크 연결 오류가 발생했습니다. 지금까지 수집된 기사만 처리합니다.")
-            break
+            res = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10.0)
+            res.raise_for_status() # 200 OK 응답이 아닐 경우 에러 발생
+        except Exception as e:
+            st.warning(f"연합뉴스 페이지 {page} 수집 중 오류 발생 또는 수집 종료: {e}")
+            break # 오류 발생 시 현재까지 수집된 것만 가지고 크롤링 종료
 
         soup = BeautifulSoup(res.text, "html.parser")
         items = soup.select("ul.list01 > li[data-cid]")
+        
         if not items:
             break
-
+            
         for item in items:
             cid = item.get("data-cid")
             title_tag = item.select_one(".title01")
@@ -119,6 +114,7 @@ def parse_yonhap():
                 dt = datetime.strptime(f"{start_dt.year}-{time_tag.text.strip()}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Asia/Seoul"))
             except:
                 continue
+                
             if dt < start_dt:
                 return fetch_articles_concurrently(collected, "div.story-news.article")
             if start_dt <= dt <= end_dt:
@@ -126,10 +122,12 @@ def parse_yonhap():
                     "source": "연합뉴스", "datetime": dt, "title": title_tag.text.strip(),
                     "url": f"https://www.yna.co.kr/view/{cid}"
                 })
+                
         page += 1
-
+        t.sleep(0.5)  # ⭐ 핵심: 타겟 서버에 무리를 주지 않기 위한 0.5초 딜레이 추가
+        
     return fetch_articles_concurrently(collected, "div.story-news.article")
-
+    
 def parse_newsis():
     collected, page = [], 1
     st.info("🔍 [뉴시스] 기사 목록 수집 중...")
